@@ -1,0 +1,967 @@
+/*******************************************************************************
+ * switchDoor
+ * By: DarkWolf
+ * Syntax: !switchDoor -create (withoutPicture)
+ *******************************************************************************
+ * This script create a switch (invisible for player but visibible for the GM)
+ * which can open or close for each door selected. By default a green aura means 
+ * it's opened, a red one it's closed.In order to create it just select the path 
+ * representing your door (1 line) and use the command "!switchDoor".
+ *******************************************************************************
+ * In reality we accept more optionnal parameters like : 
+ *   !switchDoor -help
+ *   !switchDoor -create              
+ *   !switchDoor -create withoutPicture 
+ *   !switchDoor -stopAnimation 
+ *   !switchDoor -suggestAnimation switchId pathId
+ *   !switchDoor -open switchId pathId 
+ *   !switchDoor -close switchId pathId 
+ *   !switchDoor -animate switchId pathId switchMode speed type param1 param2] 
+ * but since we create the macro with correct parameters and we associate it to 
+ * the token you should always use call sthis script without parameter unless 
+ * you want create more animation :)
+ *******************************************************************************
+ * for the animation we expect :
+ * - speed : number of seconds of the animation
+ * - type : type of the animation can be :
+ *    - slide : in this case param1 can be :
+ *              -1 if the animation go the left or 
+ *              1 if the animation go the right 
+ *          and param2 :
+ *              -1 if the animation go the top
+ *              1 if the animation go the bottom 
+ *    - doubleside : in this case param1 is the left or right direction to 
+ *          animate and param2 is the top or bottom dirrection.
+ *    - rotate : in this case param1 is clockwise or counterclockwise rotation 
+ *          and the param 2 the coordinate of the rotation center with 
+ *          format x;y
+ * - switchMode : open or close
+ ******************************************************************************/
+
+const SWITCH_CHARACTER_NAME = "switchDoorCharacter";    // default name of the switchDoor character
+const SWITCH_COLOR_ANIMATE = "#0000FF";                 // default color of the switch during an animation
+const SWITCH_COLOR_CLOSE = "#FF0000";                   // default color of the switch for a closed Door
+const SWITCH_COLOR_OPEN = "#00FF00";                    // default color of the switch for an opened Door
+const SWITCH_DEBUG = true;                              // true (for log) or false (for normal usage)
+const SWITCH_IMG_SWITCH = "https://s3.amazonaws.com/files.d20.io/images/157806163/N9esIc7mzXGJarJDEHTyvw/thumb.png?1597516046"; //Default URL image for the switch
+const SWITCH_IMG_DOOR = "https://s3.amazonaws.com/files.d20.io/images/93078/pYvYCeL-9ZgcA97QrroNzg/thumb.png?134200098555"; //Default URL image for the door
+const SWITCH_MODULE = "switchDoor_DW";                  // default name of the session module (state)
+const SWITCH_FRAME = 15;                                // number of frame during 1 second of animation
+const SWITCH_SIZE = 50;                                 // default pixel size of the switch
+const SWITCH_IMAGE_NAME = "switchDoorToken";            // name of all the imageDoor token in case we need to do action on all of them
+const SWITH_COMMAND_SEPARATOR = ";";                    // unique symbol to split the bar3
+const SWITH_SUB_SEPARATOR = " ";                        // symbol to get the parameters
+const SWITH_TEMPLATE = "default";                       // name of the template use to display the menu. 
+const SWITCH_TOKEN_NAME = "switchDoorToken";            // name of all the switchDoor token in case we need to do action on all of them
+const SWITCH_USAGE = "Usage : !switchDoor -create [withoutPicture] | -open doorId pathId | -close doorId pathId | -stopAnimation | -animate doorId pathId switchMode animationSpeed animationType animationParam1 animationParam2 | -suggestAnimation | -help"   // Correct syntax
+const SWITCH_VERSION = "v0.3.6";                        // currentVersion of the switchDoor
+
+//uppercase the first letter
+function strUcFirst(a){return (a+'').charAt(0).toUpperCase()+a.substr(1);}
+
+
+/*******************************************************************************
+ * Activate the door
+ ******************************************************************************/
+function activeDoor(mode, tokenId, pathId, parameters){
+    debug("activating the door : " + mode + " " + tokenId + " " + pathId + " " + "...");
+    
+    /* check the token existance...*/
+    var token = getObj("graphic", tokenId);
+    if ( token === undefined ){
+        sendChat("API SD","Token" + tokenId + " undefined");
+        return;
+    }
+    
+    
+    /* ....and the path existance*/
+    var path = getObj("path", pathId);
+    if ( path === undefined ){
+        sendChat("API SD","Path" + pathId + " undefined");
+        return;
+    }
+    
+    switch( mode ){
+        case "-animate" : 
+                /* swhould we animate-it ? */
+                if ( parameters.length !== 9 ){
+                    sendChat("API SD","Unknow mode " + mode + ". " + SWITCH_USAGE);  
+                    return;
+                }
+                /* TODO switch for others animation like rate or secret door */
+                
+                animateDoor(token, path, parameters[4], parameters[5], parameters[6], parameters[7], parameters[8]);
+            break;
+            
+	    case "-close":
+	        closeDoor(token, path);
+	        break;
+	        
+	    case "-open":
+	        openDoor(token, path);
+	        break;
+	    
+	    case "-remove":
+	        clean(token, path);
+	        break;
+	        
+	   case "-suggestAnimation" :
+            suggestedAnimation(token, path);
+            break;
+        
+        default:
+            sendChat("API SD","Unknow mode " + mode + ". " + SWITCH_USAGE);
+            return;
+    }
+    debug("successfully activated");
+}
+
+
+/*******************************************************************************
+ * Animate the door
+ ******************************************************************************/
+ //test : !switchDoor animate @{selected|token_id} @{selected|bar1} open 1000 10 slide left bottom
+function animateDoor(token, path, switchMode, animationSpeed, animationType, animationParam1, animationParam2){
+    debug("==> animating door (switchMode : " + switchMode + ", animationSpeed : " + animationSpeed + ",animationType : " + animationType + ", animationParam1 : " + animationParam1 + ", animationParam2 : " + animationParam2 + "...");
+    
+    /* since the animation is to update dynamic lighning change the layer */
+    path.set({
+       layer : "walls" 
+    });
+    
+    /* change the switch color and remember the some animation parameters */
+    token.set({
+        aura1_color : SWITCH_COLOR_ANIMATE,
+        bar3_value : switchMode + SWITH_SUB_SEPARATOR + animationSpeed + SWITH_SUB_SEPARATOR + animationType + SWITH_SUB_SEPARATOR + animationParam1 + SWITH_SUB_SEPARATOR + animationParam2
+    });
+
+    /* get the 2 points of the line */
+    var pointArray = JSON.parse(path.get("path"));
+    var P1 = pointArray[0];
+    var P2 = pointArray[1];
+
+    /* store all informations needed for the animation */
+    if( ! state.SWITCH_MODULE ) {
+        state.SWITCH_MODULE = {
+            animationParam1 : animationParam1,
+            animationParam2 : animationParam2,
+            image : getImage(token.get("bar2_value")),
+            originalPoint1 : {
+                x : P1[0],
+                y : P1[1]
+            },
+            originalPoint2 : {
+                x : P2[0],
+                y : P2[1]
+            },
+            originaleLeft : path.get("left"),
+            originaleTop : path.get("top"),
+            path : path,
+            progress : 0,
+            progressMax : animationSpeed * SWITCH_FRAME,
+            switchMode : switchMode,
+            token : token
+        };
+    }else{
+        sendChat("API SD"," Already processing an animation. Please try later");
+        return;
+    }
+    
+    switch(animationType){
+        case "slide" : 
+             animation = setInterval(animationSlide, animationSpeed * 1000 / SWITCH_FRAME);
+            break;
+            
+        case "doubleside" : 
+            break;
+            
+        case "rotate" : 
+            break;
+            
+        default:
+            sendChat("API SD","Unknow animation mode " + animationType + ". " + SWITCH_USAGE);
+            return;
+    }
+    
+    debug("*** successfully animate !");
+}
+
+
+/*******************************************************************************
+ * Animate a rotating door
+ ******************************************************************************/
+function animationRotate(){
+    var pathJson = _.clone(JSON.parse(state.SWITCH_MODULE.path.get("path")));
+    /* TODO totation not a slide
+    log("droite (" + pathJson[0][1] + " , " + pathJson[0][2] + ") - " + pathJson[1][1] + " , " + pathJson[1][2] + ")");
+    pathJson[0][1] += state.SWITCH_MODULE.animationParam1 * (state.SWITCH_MODULE.path.get("width") / state.SWITCH_MODULE.progressMax);
+    pathJson[0][2] += state.SWITCH_MODULE.animationParam2 * (state.SWITCH_MODULE.path.get("height") / state.SWITCH_MODULE.progressMax);
+    pathJson[1][1] += state.SWITCH_MODULE.animationParam1 * (state.SWITCH_MODULE.path.get("width") / state.SWITCH_MODULE.progressMax);
+    pathJson[1][2] += state.SWITCH_MODULE.animationParam2 * (state.SWITCH_MODULE.path.get("height") / state.SWITCH_MODULE.progressMax);
+    log("droite (" + pathJson[0][1] + " , " + pathJson[0][2] + ") - " + pathJson[1][1] + " , " + pathJson[1][2] + ")");
+
+    var path = createObj("path", {
+        pageid: state.SWITCH_MODULE.path.get("pageid"),
+        fill: state.SWITCH_MODULE.path.get("fill"),
+        stroke: state.SWITCH_MODULE.path.get("stroke"),
+        rotation: state.SWITCH_MODULE.path.get("rotation"),
+        layer: state.SWITCH_MODULE.path.get("layer"),
+        stroke_width: state.SWITCH_MODULE.path.get("stroke_width"),
+        width: state.SWITCH_MODULE.path.get("width"),
+        height: state.SWITCH_MODULE.path.get("height"),
+        path: JSON.stringify(pathJson),
+        top: state.SWITCH_MODULE.path.get("top"),
+        left: state.SWITCH_MODULE.path.get("left"),
+        scaleX: state.SWITCH_MODULE.path.get("scaleX"),
+        scaleY: state.SWITCH_MODULE.path.get("scaleY")
+    });
+        
+    // movement is an illusion, technically
+    state.SWITCH_MODULE.path.remove();
+    state.SWITCH_MODULE.path = path;
+    state.SWITCH_MODULE.token.set({
+        bar1_value : path.get("id")
+    });
+    */
+}
+
+
+/*******************************************************************************
+ * Animate a sliding door
+ ******************************************************************************/
+function animationSlide(){
+    
+    /* Move the door's image acording to the parameters direction... */
+    if (state.SWITCH_MODULE.image != "" ){
+        state.SWITCH_MODULE.image.set({
+            left : state.SWITCH_MODULE.image.get("left") + state.SWITCH_MODULE.animationParam1 * state.SWITCH_MODULE.path.get("width") / state.SWITCH_MODULE.progressMax,
+            top : state.SWITCH_MODULE.image.get("top") + state.SWITCH_MODULE.animationParam2 * state.SWITCH_MODULE.path.get("height") / state.SWITCH_MODULE.progressMax
+        });
+    }
+    
+    /* ...and illumating the room accordingly to the movement of the door (even without the image) */
+    state.SWITCH_MODULE.path.set({
+        left : state.SWITCH_MODULE.path.get("left") + state.SWITCH_MODULE.animationParam1 * state.SWITCH_MODULE.path.get("width") / state.SWITCH_MODULE.progressMax,
+        top : state.SWITCH_MODULE.path.get("top") + state.SWITCH_MODULE.animationParam2 * state.SWITCH_MODULE.path.get("height") / state.SWITCH_MODULE.progressMax
+    });
+    
+    isEndOfAnimation();
+}
+
+
+/*******************************************************************************
+ * Remove the switch and associated object
+ * WARNING destructive method, only call it if you lost the object and want to 
+ * remove it
+ ******************************************************************************
+function clean(token, path){
+    debug("==> removing (switch " + token.get("id")  + ") ...");
+    
+    var image = getImage(token.get("bar2_value"));
+    if ( image !== null ){
+        if ( SWITCH_DEBUG )
+            log("API SD ==> removing (image " + image.get("id")  + ") ...");
+        image.remove();
+    }
+    path.remove();
+    token.remove();
+    
+    debug("==> removing (path " + path.get("id")  + ") ...");
+}
+
+
+/*******************************************************************************
+ * Close the door changing the color of the switch token and moving the path to
+ * the wall layer
+ ******************************************************************************/
+function closeDoor(token, path){
+    debug("==> closing door (path " + path.get("id")  + ") ...");
+    
+    path.set({
+        layer: "walls"
+    });
+    
+    token.set({
+        aura1_color : SWITCH_COLOR_CLOSE
+    });
+    
+    setImageLayer(token.get("bar2_value"), "map");
+    
+    debug("*** sucessfully closed the door (token " + token.get("id")  + ") !");
+}
+ 
+ 
+/*******************************************************************************
+ * Create an image of a Door on the map layer and positionning to matching the 
+ * path 
+ ******************************************************************************/
+function createImageDoor( path, pageId ){
+    debug("creating image door for " + path.get("id") + "...");
+    
+    var imageDoorToken = createObj("graphic", {
+        subtype : "token",
+        pageid : pageId,
+        imgsrc : SWITCH_IMG_DOOR,
+        left : path.get("left"),
+        top : path.get("top"), 
+        width : 200,
+        height : 100,
+        layer : "map",
+        //isdrawing : true,
+        name : SWITCH_IMAGE_NAME
+    });
+    
+    
+    /* TODO check the roation of the path ? */
+    var pointArray = JSON.parse(path.get("path"));
+    var P1 = pointArray[0];
+    var P2 = pointArray[1];
+    var angle = getAngle( P1, P2 );
+    var size = getHypotenuse( P1, P2 );
+    
+    
+    log("P1 : " + P1);
+    log("P2 : " + P2);
+    log (angle);
+    
+    imageDoorToken.set({
+        gmnotes : "genarated by API switchDoor",
+        rotation : angle,
+        width : size
+    });
+    
+    toFront(imageDoorToken);
+    
+    debug("*** sucessfully create an image for the door !");
+    
+    return imageDoorToken.get("id");
+}
+
+
+/*******************************************************************************
+ * Create some usefullmacro for the characterSwitch 
+ ******************************************************************************/
+function createSwitchAbilities( switchCharacterId ){
+    debug("creating switch abilities for " + switchCharacterId + "...");
+    
+    /* for opening...*/
+    createObj("ability", {
+        characterid : switchCharacterId,
+        name : "open",
+        action : "!switchDoor -open @{selected|token_id} @{selected|bar1}",
+        istokenaction : true
+    });
+    
+    /* ...and the closing the door.*/
+    createObj("ability", {
+        characterid : switchCharacterId,
+        name : "close",
+        action : "!switchDoor -close @{selected|token_id} @{selected|bar1}",
+        istokenaction : true
+    });
+    
+    /* But also the animations for the 4 ways to open the sliding door ...*/
+    createObj("ability", {
+        characterid : switchCharacterId,
+        name : "slideOpenToLeftBottom",
+        action : "!switchDoor -animate @{selected|token_id} @{selected|bar1} open 1 slide -1 1",
+        istokenaction : false
+    });
+    createObj("ability", {
+        characterid : switchCharacterId,
+        name : "slideOpenToLeftTop",
+        action : "!switchDoor -animate @{selected|token_id} @{selected|bar1} open 1 slide -1 -1",
+        istokenaction : false
+    });
+    createObj("ability", {
+        characterid : switchCharacterId,
+        name : "slideOpenToRightBottom",
+        action : "!switchDoor -animate @{selected|token_id} @{selected|bar1} open 1 slide 1 1",
+        istokenaction : false
+    });
+    createObj("ability", {
+        characterid : switchCharacterId,
+        name : "slideOpenToRightTop",
+        action : "!switchDoor -animate @{selected|token_id} @{selected|bar1} open 1 slide 1 -1",
+        istokenaction : false
+    });
+    
+    /* ...The 4 ways to closing the sliding door... */
+    createObj("ability", {
+        characterid : switchCharacterId,
+        name : "slideCloseToLeftBottom",
+        action : "!switchDoor -animate @{selected|token_id} @{selected|bar1} close 1 slide -1 1",
+        istokenaction : false
+    });
+    createObj("ability", {
+        characterid : switchCharacterId,
+        name : "slideCloseToLeftTop",
+        action : "!switchDoor -animate @{selected|token_id} @{selected|bar1} close 1 slide -1 -1",
+        istokenaction : false
+    });
+    createObj("ability", {
+        characterid : switchCharacterId,
+        name : "slideCloseToRightBottom",
+        action : "!switchDoor -animate @{selected|token_id} @{selected|bar1} close 1 slide 1 1",
+        istokenaction : false
+    });
+    createObj("ability", {
+        characterid : switchCharacterId,
+        name : "slideCloseToRightTop",
+        action : "!switchDoor -animate @{selected|token_id} @{selected|bar1} close 1 slide 1 -1",
+        istokenaction : false
+    });
+
+    /* ...a menu to control them... *
+        createObj("ability", {
+        characterid : switchCharacterId,
+        name : "animationOpen",
+        action : "/w gm &{template:" + SWITH_TEMPLATE + "}{{name=OPEN to...}}{{Slide : [v<](~slideOpenToRightBottom)[<^](~slideOpenToRightTop)[^>](~slideOpenToLeftTop)[v>](~slideOpenToLeftBottom)}}",
+        istokenaction : true
+    });
+    /* ...a menu to control them... *
+        createObj("ability", {
+        characterid : switchCharacterId,
+        name : "animationClose",
+        action : "/w gm &{template:" + SWITH_TEMPLATE + "}{{name=CLOSE to...}}{{Slide : [v<](~slideCloseToRightBottom)[<^](~slideCloseToRightTop)[^>](~slideCloseToLeftTop)[v>](~slideCloseToLeftBottom)}}",
+        istokenaction : true
+    });*/
+    /* ...a menu to control them all ... */
+        createObj("ability", {
+        characterid : switchCharacterId,
+        name : "all",
+        action : "/w gm &{template:" + SWITH_TEMPLATE + "}{{name=SLIDE TO ...}}{{Open : [v>](~slideOpenToRightBottom)[^>](~slideOpenToRightTop)[^<](~slideOpenToLeftTop)[v<](~slideOpenToLeftBottom)}}{{Close : [^<](~slideCloseToLeftTop)[v<](~slideCloseToLeftBottom)[v>](~slideCloseToRightBottom)[^>](~slideCloseToRightTop)}}",
+        istokenaction : false
+    });
+    /* ...and a more intelligent one */
+        createObj("ability", {
+        characterid : switchCharacterId,
+        name : "animate",
+        action : "!switchDoor -suggestAnimation @{selected|token_id} @{selected|bar1}",
+        istokenaction : true
+    });
+
+    /* TODO : create animation for opeing/closing door
+                - rotating doors
+                - sliding from the middle
+    */
+    
+    /* TODO : create a function to move the switch to the token layer and edit the right to allow the user to activate it */
+    
+    /* But also for some reseting animation in case of API's crash */
+    createObj("ability", {
+        characterid : switchCharacterId,
+        name : "StopAnimation",
+        action : "!switchDoor -stopAnimation",
+        istokenaction : true
+    });
+    
+    debug("*** successfully created abilities !");
+}
+ 
+ 
+/*******************************************************************************
+ * Create the switchDoorCharacter with usefullmacro
+ ******************************************************************************/
+function createSwitchCharacter(){
+    debug("==> creating switch character " + SWITCH_CHARACTER_NAME + " in " + SWITCH_VERSION + "...");
+    
+    /* TODO create 2 switchCharacter 1 for opening door, the other for closing door and changing the represent when activate the door */
+    
+    var switchDoorCharacter = createObj("character", {
+        name : SWITCH_CHARACTER_NAME
+    });
+    switchDoorCharacter.set({
+        gmnotes : SWITCH_VERSION
+    });
+    
+    createSwitchAbilities(switchDoorCharacter.get("id"), SWITCH_DEBUG);
+    
+    debug("*** successfully create " + switchDoorCharacter.get("id") + " !");
+    return switchDoorCharacter;
+}
+ 
+ 
+/*******************************************************************************
+ * Create the switchDoor token transparent for players but with a visible aura 
+ * for the gm (red since the door is closed by default) on token layer at 
+ * the center of the path 
+ ******************************************************************************/
+function createSwitchToken(path, switchDoorCharacterId, pageId, imageDoorId){
+    debug("==> creating switch token (path " + path.get("id") + ") ...");            
+
+	var switchDoorToken = createObj("graphic", {
+        subtype : "token",
+        pageid : pageId,
+        imgsrc : SWITCH_IMG_SWITCH,
+        represents : switchDoorCharacterId,
+        left : path.get("left"),
+        top : path.get("top"), 
+        width : SWITCH_SIZE,
+        height : SWITCH_SIZE,
+        layer : "objects",
+        name : SWITCH_TOKEN_NAME,
+        bar1_value : path.get("id"),
+        bar2_value : imageDoorId,
+        aura1_radius : 0
+    });
+    
+    switchDoorToken.set({
+        gmnotes : "genarated by API switchDoor"
+    });
+    
+	closeDoor( switchDoorToken, path );
+    debug("*** successfully create the switch (token " + switchDoorToken.get("id") + ") !");	
+	return 1;
+}
+
+
+/*******************************************************************************
+ * log the message if debug mode enabled
+ ******************************************************************************/
+function debug(msg){
+    if ( SWITCH_DEBUG )
+	    log( "API SD " + msg );
+}
+
+
+/*******************************************************************************
+ * return the angle between the path's line and the horizontal
+ ******************************************************************************/
+function getAngle(P1, P2){
+    debug("==> calculating angle (" + P1[2] + "," + P1[1] + ") - (" + P2[2] + "," + P2[1] + ")...");
+	
+	var angle = 0 ;
+	
+    var deltaX = P1[1] - P2[1];
+    var deltaY = P1[2] - P2[2];
+
+    /* specific case */
+    if ( deltaX === 0 ){
+		if ( deltaY < 0 )	
+			angle = -Math.PI/2;
+		else	
+			angle = Math.PI/2;
+	}else{
+		angle = Math.atan2( deltaY, deltaX );
+		if ( deltaX < 0 )
+			angle = angle + Math.PI;
+	}
+ 
+    angle = 180 * angle / Math.PI;
+	/* normalize angle
+	if ( angle < 0 )
+		angle = angle + 2 * Math.PI;*/
+		
+	debug("*** successfully calculate : " + angle + " !" );
+	    
+	return angle;
+}
+
+
+function getHypotenuse(P1, P2){
+    debug("==> calculating hypothenuse...");
+	
+	var deltaX = P1[1] - P2[1];
+    var deltaY = P1[2] - P2[2];
+    var hypotenuse = Math.sqrt( deltaX * deltaX + deltaY * deltaY );
+    
+    debug("*** successfully calculate : " + hypotenuse + " !" );
+	return hypotenuse;
+}
+
+
+/*******************************************************************************
+ * return the associate Image if it exist null otherwise
+ ******************************************************************************/
+function getImage(ImageId){
+    debug("==> retrieving image " + ImageId + "...");
+	
+	var image = "";
+	if ( ImageId !== "" ){
+        var token = getObj("graphic", ImageId);
+        if ( token === undefined ){
+            sendChat("API SD","Image " + ImageId + " undefined");
+            image="";
+        }else{
+            image = token;
+        }
+    }
+    debug("*** successfully get the image !");
+	return image;
+}
+
+
+function help(){
+    debug("==> helping...");
+    
+    var help = "<h2>switchDoor " + SWITCH_VERSION + "</h2><br>";
+    help += "Commands : <b>!swithDoor -create : </b> to create the door when you have selected a path. if you don't want a door picture on the map layer add the parameter withoutPicture.<br>";
+    help += "All other functionnality are usable throught buttons on the created switch token. If you plan to use it often you can create a macro with <i>!swithDoor -create</i> and click on the button :)"
+    sendChat("API SD", help);
+   /* 
+    
+ *   !switchDoor 
+ *   !switchDoor -open switchId pathId 
+ *   !switchDoor -close switchId pathId 
+ *   !switchDoor -animate switchId pathId switchMode speed type param1 param2] 
+ * but since we create the macro with correct parameters and we associate it to 
+ * the token you should always use call sthis script without parameter unless 
+ * you want create more animation :)
+ *******************************************************************************
+ * for the animation we expect :
+ * - speed : number of seconds of the animation
+ * - type : type of the animation can be :
+ *    - slide : in this case param1 can be :
+ *              -1 if the animation go the left or 
+ *              1 if the animation go the right 
+ *          and param2 :
+ *              -1 if the animation go the top
+ *              1 if the animation go the bottom 
+ *    - doubleside : in this case param1 is the left or right direction to 
+ *          animate and param2 is the top or bottom dirrection.
+ *    - rotate : in this case param1 is clockwise or counterclockwise rotation 
+ *          and the param 2 the coordinate of the rotation center with 
+ *          format x;y
+ * - switchMode : open or close*/
+    
+    debug("*** successfully help !");
+}
+
+
+/*******************************************************************************
+ * Initialise the door creating a swith and a map if necessary . It also update
+ * automatically the switch characters if it's an old version
+ ******************************************************************************/
+function initialiseDoor(msg, withImage){
+    debug("==> initialising door...");    
+    	
+    var selected = msg.selected;
+    if ( msg.selected === undefined ) {
+        sendChat("API SD","Please select a path to use it at a wall. The script will create a switch to open/close it");
+        return;
+    }
+    
+    /* check you are a GM... */
+    if ( ! playerIsGM( msg.playerid ) ){
+        sendChat("API SD, " + msg.who + " you need to be GM to use it");
+        return;
+    }
+    
+    /* ... and find the page you are looking */
+    var gm=getObj("player", msg.playerid);
+    var viewPageId = gm.get("_lastpage");
+    
+    /* check if the switchDoor Character exist */
+    var switchDoorCharacter = findObjs({                              
+      _name : SWITCH_CHARACTER_NAME,                              
+      _type : "character"                          
+    });
+    
+    if ( switchDoorCharacter.length === 0 ){
+        log("API SD no switchDoorCharacter found --> creating");
+        switchDoorCharacter = createSwitchCharacter();
+        
+    }else{
+        /* check if it's the last version */
+        switchDoorCharacter = switchDoorCharacter[0];
+        switchDoorCharacter.get("gmnotes", function(notes) {
+            if ( notes !== SWITCH_VERSION ){
+                log("API SD old switchCharacter version detected --> updating");
+                updateSwitchCharacter();
+                sendChat("API SD ", " successfully update ability to " + SWITCH_VERSION + "!");
+            }
+        });
+    }
+    
+    /* create a switch (and eventually and image for each path */
+     var nbCreate = 0;
+     _.each(msg.selected, function(obj) {
+        
+        /* is it really a path ? */
+        var path = getObj("path", obj._id);
+        if ( path === undefined ){
+            sendChat("API SD", "Please select a path not a token");
+            return 0;
+        }
+
+        var imageDoorId = "";
+        if ( withImage ){
+            imageDoorId = createImageDoor( path, viewPageId);
+        }
+        nbCreate+= createSwitchToken(path, switchDoorCharacter.get("id"), viewPageId, imageDoorId);
+    });
+    sendChat("API SD", nbCreate + " switch created");
+    debug("successfully initialised !");
+}
+
+
+/*******************************************************************************
+ * End the animation when it's time
+ ******************************************************************************/
+function isEndOfAnimation(){
+    debug("==> animation progressing : " + state.SWITCH_MODULE.progress + " / " + state.SWITCH_MODULE.progressMax + "..." );
+        /* more log if bug tracking during the animation
+        log("image left : " + state.SWITCH_MODULE.image.get("left"));
+        log("path left : " + state.SWITCH_MODULE.path.get("left"));*/
+    
+    
+    if (state.SWITCH_MODULE.progress === state.SWITCH_MODULE.progressMax ){
+        log("API SD end of the animation detected");
+        
+        /* TODO in case of closing restore the original shape and position to fix apporximation value */
+        
+        /* change the switch state */
+        activeDoor("-" + state.SWITCH_MODULE.switchMode, state.SWITCH_MODULE.token.get("id"), state.SWITCH_MODULE.path.get("id"), "");
+        
+        /* refresh the suggestAnimation */
+        suggestedAnimation(state.SWITCH_MODULE.token, state.SWITCH_MODULE.path);
+        
+        /* stop the current animation*/
+        clearInterval(animation);
+        state.SWITCH_MODULE = undefined;
+        
+        debug("*** successfully end the animation !");
+    }else{
+        state.SWITCH_MODULE.progress++;
+    }
+}
+
+
+/*******************************************************************************
+ * Open the door changing the color of the switch token and moving the path to 
+ * the gm layer
+ ******************************************************************************/
+
+function openDoor(token, path){
+    debug("==> opening door (path " + path.get("id")  + ") ...");
+    
+    path.set({
+        layer: "gmlayer"
+    });
+    
+    token.set({
+        aura1_color : SWITCH_COLOR_OPEN
+    });
+    
+    setImageLayer(token.get("bar2_value"), "gmlayer");
+    
+    debug("*** sucessfully opened the door (token " + token.get("id")  + ") !");
+}
+ 
+ 
+/*******************************************************************************
+ * change the layer of the image
+ ******************************************************************************/
+function setImageLayer(imageId, layer ){
+    debug("==> set image layer " + layer  + "...");
+    
+    var image = getImage(imageId);
+    if ( image != "" ){
+        log("API SD image : " + image);
+        image.set({
+            layer : layer
+        });
+    }
+    debug("*** sucessfully change the image layer !");
+}
+
+
+/*******************************************************************************
+ * Suggest the most pertinents animation according status of the switch and 
+ * the orgin of the drawing and history
+ ******************************************************************************/
+function suggestedAnimation(token, path){
+    debug("==> suggesting animations...");
+    
+    var lastParam = ""; 
+    var inversedSwitchMode = "";
+    var guessedAnimation;
+
+    if ( token.get("bar3_value") === "" ){
+        /* not really precise but it's only the first time */
+        guessedAnimation = suggestedFirstAnimation(token);
+        
+    }else{
+
+        /* more accurate we reverse the last animation */
+        var cmd = token.get("bar3_value").split(SWITH_COMMAND_SEPARATOR);
+        lastParam = cmd[0];
+        var parameters = lastParam.split(SWITH_SUB_SEPARATOR);
+        debug(parameters);
+        var switchMode = parameters[0];
+        var animationSpeed = parameters[1];
+        var animationType = parameters[2];
+        var animationParam1 = parameters[3];
+        var animationParam2 = parameters[4];
+        
+        var guessedButton;
+        
+        /* reverse the command switchmode between open and close */
+        switch( switchMode ){
+            case "close" :
+                inversedSwitchMode = "open";
+                break;
+                
+            case "open" :
+                inversedSwitchMode = "close";
+                break;
+                
+            default:
+                guessedAnimation="incorrrect switchMode : " + switchMode +".";
+        }
+        
+        guessedAnimation = animationType + strUcFirst(inversedSwitchMode) + "To";
+        
+        /* reverse the last parameters */
+        switch( animationType ){
+            case "slide" :
+                /* reverse the horizontal direction... */
+                if ( animationParam1 === "1"){
+                    guessedAnimation += "Left";
+                    guessedButton = "<";
+                }else{
+                    guessedAnimation += "Right";
+                    guessedButton = ">";
+                }
+                
+                /* ...and the vertical */
+                if ( animationParam2 === "1"){
+                    guessedAnimation += "Top";
+                    guessedButton = "[^" + guessedButton + "]";
+                }else{
+                    guessedAnimation += "Bottom";
+                    guessedButton = "[v" + guessedButton + "]";
+                }
+                guessedAnimation = "Slide = " + guessedButton + "(~selected|" + guessedAnimation +")";
+                
+                break;
+                
+            case "rotate" :
+                guessedAnimation = "";
+                break;
+                
+            default:
+                guessedAnimation = "incorrrect animationType : " + animationType;
+        }
+        
+    }    
+    
+    /* TODO create the Animate ability which call this function */
+    
+    /* new one in the chat */        
+    sendChat("API SD", "/w gm &{template:" + SWITH_TEMPLATE + "}}{{name=Suggested " + inversedSwitchMode + "Animation}}{{" + guessedAnimation + " [other](~selected|all)}}");
+    
+    debug("*** successfully suggested !");    
+}
+
+
+/*******************************************************************************
+ * Suggest the most pertinents animation according status of the switch and 
+ * the orgin of the drawing and history
+ ******************************************************************************/
+function suggestedFirstAnimation(token){
+    debug("==> suggesting the first animation...");
+    
+    var guessedAnimation;
+
+    /*temporary*/
+    guessedAnimation = "[Animated](~selected|all)";
+
+    /* "since firstTime we need to open" */
+
+    /* TODO search the starting point */
+
+	/* TODO determine the quadrant to get the sliding way*/
+    
+    /* TODO guessed the sliding command */
+    
+    /* TODO guessed the rotated command with center as starting point and clock/counterclockwise animation */
+    debug("*** successfully first suggested !");
+
+     return guessedAnimation;
+}
+
+
+/*******************************************************************************
+ * remove old abilities and recreate all of them in the last version
+ ******************************************************************************/
+function updateSwitchCharacter(){
+    debug("==> updating switch character for " + SWITCH_CHARACTER_NAME + "...");
+    
+    var switchDoorCharacter = findObjs({
+        type : "character",
+        name : SWITCH_CHARACTER_NAME
+    });
+
+    switchDoorCharacter[0].set({
+        gmnotes : SWITCH_VERSION
+    });
+
+    var oldAbilities = findObjs({
+        type : "ability",
+        characterid : switchDoorCharacter[0].get("id")
+    });
+    
+    log("API SD " + oldAbilities.length + " old Abilies found...");
+    _.each(oldAbilities, function(obj) {
+        obj.remove();
+    });
+    createSwitchAbilities(switchDoorCharacter[0].get("id"));
+    
+    debug("*** successfully updated abilities !");
+}
+ 
+ 
+ 
+/*******************************************************************************
+ * MAIN filter en !switchDoor command
+ *****************************************************************************/
+on('chat:message', function(msg) {
+    if ( msg.type == "api" && msg.content.indexOf("!switchDoor") !== -1 ) {
+        /* Default parameter */
+        
+        debug("##########################################"); 
+        debug("   command received : " + msg.content);
+        
+    	var parameters = msg.content.split(" ");
+    	if ( parameters.length < 2 ){
+    	    sendChat("API SD","Unknow mode " + mode + ". " + SWITCH_USAGE);
+            
+    	}else{    
+    	    var mode = parameters[1];
+    	    switch( mode ){
+    	        /* all modes requiring action on token and/or path */
+                case "-animate" : 
+    	        case "-close":
+    	        case "-open":
+    	        case "-remove":
+                case "-suggestAnimation":
+                    if ( parameters.length < 4 )
+    	                sendChat("API SD","Unknow mode " + mode + ". " + SWITCH_USAGE);
+    	            else
+                        activeDoor(parameters[1], parameters[2], parameters[3], parameters);
+	                break;
+	                
+                case "-create" :
+                    /* no parameters means withPicture*/
+                    initialiseDoor(msg, parameters.length === 2);
+                    break;
+        	    
+        	    case "-help" :
+        	        help();
+        	        break;
+        	        
+        	    case "-stopAnimation":
+        	        state.SWITCH_MODULE = undefined;
+        	        sendChat("API SD","Animation Stopped !");
+        	        break;
+                
+                default:
+                    sendChat("API SD","Unknow mode " + mode + ". " + SWITCH_USAGE);
+                    return;
+            }
+    	}
+        debug("******************************************");
+    }
+});
