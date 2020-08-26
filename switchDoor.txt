@@ -120,7 +120,6 @@ function activeDoor(mode, tokenId, pathId, parameters){
 /*******************************************************************************
  * Animate the door
  ******************************************************************************/
- //test : !switchDoor animate @{selected|token_id} @{selected|bar1} open 1000 10 slide left bottom
 function animateDoor(token, path, switchMode, animationSpeed, animationType, animationParam1, animationParam2){
     debug("==> animating door (switchMode : " + switchMode + ", animationSpeed : " + animationSpeed + ",animationType : " + animationType + ", animationParam1 : " + animationParam1 + ", animationParam2 : " + animationParam2 + "...");
     
